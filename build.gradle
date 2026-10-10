@@ -103,6 +103,8 @@ tasks.named('runVisual').configure {
         delete file('run-visual/saves/JMShipsVisual')
         delete file('run-visual/jmships-result.txt')
         delete fileTree(dir: 'run-visual/screenshots', include: 'jmships-*.png')
+        // JourneyMap's own map of the last world would show through under the new one.
+        delete file('run-visual/journeymap/data')
         def options = new File(dir, 'options.txt')
         if (!options.exists()) {
             options.text = ['pauseOnLostFocus:false', 'onboardAccessibility:false', 'skipMultiplayerWarning:true', 'tutorialStep:none',

@@ -1,5 +1,6 @@
 package com.asteain.jmships.jm;
 
+import com.asteain.jmships.map.Visibility;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
@@ -38,15 +39,19 @@ final class ShipTexture implements AutoCloseable {
         return true;
     }
 
-    /** Paints what {@link com.asteain.jmships.map.Projector} saw, shaded by slope like a vanilla map, and sends it to the GPU. */
-    void paint(byte[] colors, float[] heights, int pixelsPerBlock) {
+    /**
+     * Paints what {@link com.asteain.jmships.map.Projector} saw, shaded by slope like a vanilla map, and sends it to the GPU.
+     *
+     * @param shown one of {@link Visibility}'s answers per pixel
+     */
+    void paint(byte[] colors, float[] heights, int pixelsPerBlock, byte[] shown) {
         final NativeImage image = texture.getPixels();
         if (image == null) return;
         for (int z = 0; z < side; z++) {
             for (int x = 0; x < side; x++) {
                 final int at = z * side + x;
                 final int color = colors[at] & 0xFF;
-                if (color == 0) {
+                if (color == 0 || shown[at] == Visibility.HIDDEN) {
                     image.setPixelRGBA(x, z, 0);
                     continue;
                 }
@@ -56,7 +61,8 @@ final class ShipTexture implements AutoCloseable {
                     if (rise > SLOPE) shade = 2;
                     else if (rise < -SLOPE) shade = 0;
                 }
-                image.setPixelRGBA(x, z, shades(color)[shade]);
+                final int abgr = shades(color)[shade];
+                image.setPixelRGBA(x, z, shown[at] == Visibility.DIMMED ? abgr >> 1 & 0x7F7F7F | 0xFF000000 : abgr);
             }
         }
         texture.upload();

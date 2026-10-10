@@ -6,6 +6,8 @@ import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.companion.math.BoundingBox3i;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
+import journeymap.api.v2.client.display.Context;
+import journeymap.api.v2.client.fullscreen.IFullscreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -42,22 +44,31 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Starts a real client with JourneyMap and Sable, makes a flat world, builds three ships (level, turned and tipped, moving)
- * and takes screenshots of the world from above, the minimap and the fullscreen map. The pictures are judged by eye.
- * Never shipped.
+ * Starts a real client with JourneyMap and Sable, makes a flat world, builds three ships (level and half under a roof,
+ * turned and tipped, moving) and takes screenshots of the world, the minimap and the fullscreen map, on the surface map and
+ * on the cave map. The pictures are judged by eye. Never shipped.
  */
 @EventBusSubscriber(modid = "jmshipstest", value = Dist.CLIENT)
 public final class Visual {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final String WORLD = "JMShipsVisual";
-    /** Height of the ships' decks: the flat world's ground is at -61. */
-    private static final int DECK = -50;
+    /** Height of the ships' decks: the flat world's ground is at -61. The whole ship lies in JourneyMap's slice -3 (-48 to -33). */
+    private static final int DECK = -46;
+    /** A stone roof over the west three fifths of the first ship, inside the same slice. */
+    private static final int ROOF = DECK + 8;
 
     private static boolean creating;
     private static boolean prepared;
     private static int ticks;
-    /** Ships held where the check wants them, by id: {position, orientation}. Written and read on the server thread. */
+    /** Ships held where the check wants them, by id: {position, orientation, orientation as built}. Written and read on the server thread. */
     private static final Map<UUID, Object[]> HELD = new LinkedHashMap<>();
+    /**
+     * Server ticks a new ship is kept as it was built before it is turned. A ship turned in the tick it was made, and then
+     * held still, has shown up unturned on the client (run 3 of 2026-10-11): the one change of pose seems to be able to
+     * arrive before the ship itself does.
+     */
+    private static final int SETTLE = 40;
+    private static long heldSince = Long.MIN_VALUE;
     private static UUID moving;
     private static final List<String> NOTES = new ArrayList<>();
 
@@ -102,14 +113,22 @@ public final class Visual {
         if (ticks == 140) fullscreen(mc, 4);
         // The first opening of a session shows JourneyMap's "about" page instead of the map: close it and open again.
         if (ticks == 150) fullscreen(mc, 0);
-        if (ticks == 200) capture(mc, "jmships-02-fullscreen.png");
-        if (ticks == 210) mc.setScreen(null);
-        if (ticks == 300) capture(mc, "jmships-03-world-and-minimap-later.png");
-        if (ticks == 320) fullscreen(mc, 0);
-        if (ticks == 380) capture(mc, "jmships-04-fullscreen-later.png");
-        if (ticks == 400) {
+        if (ticks == 200) capture(mc, "jmships-02-fullscreen-day.png");
+        if (ticks == 210) {
             mc.setScreen(null);
-            finish(mc, "PASS four screenshots taken; the pictures need a look. " + String.join(" | ", NOTES));
+            // Under the roof, beside the first ship: JourneyMap takes this for underground and turns the minimap to its cave map.
+            final UUID player = mc.player.getUUID();
+            final MinecraftServer server = mc.getSingleplayerServer();
+            server.execute(() -> server.getPlayerList().getPlayer(player).connection.teleport(-23.5, DECK + 2, 0.5, -90f, 10f));
+        }
+        if (ticks == 320) capture(mc, "jmships-03-under-roof-and-minimap.png");
+        if (ticks == 340) mapType(fullscreen(mc, 0), Context.MapType.Underground, DECK >> 4, mc);
+        if (ticks == 400) capture(mc, "jmships-04-fullscreen-cave.png");
+        if (ticks == 410) mapType(fullscreen(mc, 0), Context.MapType.Day, null, mc);
+        if (ticks == 460) capture(mc, "jmships-05-fullscreen-day-again.png");
+        if (ticks == 480) {
+            mc.setScreen(null);
+            finish(mc, "PASS five screenshots taken; the pictures need a look. " + String.join(" | ", NOTES));
         }
     }
 
@@ -127,6 +146,8 @@ public final class Visual {
             level.setBlock(new BlockPos(0, -61, i), Blocks.STONE.defaultBlockState(), 3);
             if (i % 8 == 0) for (int j = -2; j <= 2; j++) level.setBlock(new BlockPos(i, -61, j), Blocks.STONE.defaultBlockState(), 3);
         }
+
+        for (int x = -24; x <= -20; x++) for (int z = -6; z <= 6; z++) level.setBlock(new BlockPos(x, ROOF, z), Blocks.STONE.defaultBlockState(), 3);
 
         final ServerSubLevel plain = ship(level, new BlockPos(-22, DECK, -4));
         hold(plain, new Vector3d(plain.logicalPose().position()), new Quaterniond(plain.logicalPose().orientation()));
@@ -168,7 +189,7 @@ public final class Visual {
     }
 
     private static void hold(ServerSubLevel ship, Vector3d position, Quaterniond orientation) {
-        HELD.put(ship.getUniqueId(), new Object[]{position, orientation});
+        HELD.put(ship.getUniqueId(), new Object[]{position, orientation, new Quaterniond(ship.logicalPose().orientation())});
     }
 
     /** Ships are physical bodies and would fall: every tick each one is put back where the check wants it. */
@@ -178,6 +199,8 @@ public final class Visual {
         final ServerLevel level = event.getServer().overworld();
         final SubLevelContainer container = SubLevelContainer.getContainer((Level) level);
         if (container == null) return;
+        if (heldSince == Long.MIN_VALUE) heldSince = level.getGameTime();
+        final boolean settled = level.getGameTime() - heldSince >= SETTLE;
         HELD.forEach((id, place) -> {
             if (!(container.getSubLevel(id) instanceof ServerSubLevel ship) || ship.isRemoved()) return;
             final Vector3d position = (Vector3d) place[0];
@@ -185,7 +208,7 @@ public final class Visual {
             if (id.equals(moving)) position.x += Math.floorMod(level.getGameTime() / 134, 2) == 0 ? 0.09 : -0.09;
             final RigidBodyHandle body = RigidBodyHandle.of(ship);
             if (body == null || !body.isValid()) return;
-            body.teleport(position, (Quaterniond) place[1]);
+            body.teleport(position, (Quaterniond) place[settled ? 1 : 2]);
             body.addLinearAndAngularVelocity(new Vector3d(body.getLinearVelocity()).negate(), new Vector3d(body.getAngularVelocity()).negate());
         });
     }
@@ -212,21 +235,29 @@ public final class Visual {
         }
     }
 
-    private static void fullscreen(Minecraft mc, int zoomIns) {
+    /** Opens the fullscreen map (or leaves it open) centred on the origin. Null when that did not work. */
+    private static IFullscreen fullscreen(Minecraft mc, int zoomIns) {
         try {
-            if (mc.screen != null) {
-                if (mc.screen.getClass().getName().endsWith(".Fullscreen")) return;
-                mc.setScreen(null);
-            }
+            if (mc.screen instanceof IFullscreen open) return open;
+            if (mc.screen != null) mc.setScreen(null);
             final Object ui = uiManager();
-            final Object screen = ui.getClass().getMethod("getOrOpenFullscreenMap").invoke(ui);
-            for (int i = 0; i < zoomIns; i++) screen.getClass().getMethod("zoomIn").invoke(screen);
-            screen.getClass().getMethod("centerOn", double.class, double.class).invoke(screen, 0.5, 0.5);
-            NOTES.add("fullscreen zoom " + screen.getClass().getMethod("getZoom").invoke(screen));
+            final IFullscreen screen = (IFullscreen) ui.getClass().getMethod("getOrOpenFullscreenMap").invoke(ui);
+            for (int i = 0; i < zoomIns; i++) screen.zoomIn();
+            screen.centerOn(0.5, 0.5);
+            NOTES.add("fullscreen zoom " + screen.getUiState().zoom);
+            return screen;
         } catch (Throwable t) {
             LOGGER.warn("[JMSHIPSVISUAL] could not open the fullscreen map", t);
             NOTES.add("fullscreen map not opened: " + t);
+            return null;
         }
+    }
+
+    private static void mapType(IFullscreen screen, Context.MapType type, Integer slice, Minecraft mc) {
+        if (screen == null) return;
+        screen.updateMapType(type, slice, mc.level.dimension());
+        screen.centerOn(0.5, 0.5);
+        NOTES.add("fullscreen map " + type + (slice == null ? "" : " slice " + slice));
     }
 
     private static Object uiManager() throws ReflectiveOperationException {
