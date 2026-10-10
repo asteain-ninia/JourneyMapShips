@@ -1,0 +1,154 @@
+plugins {
+    id 'java-library'
+    id 'eclipse'
+    id 'idea'
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+repositories {
+    mavenCentral()
+}
+
+// Development-only visual check (jmshipstest); never included in the distributable jar.
+sourceSets {
+    testmod {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
+// Sable: the jar of the play instance, shared with ColonyPatchServer (not copied), plus the companion library nested inside it.
+// JourneyMap: only its API jar (libs/) is compiled against; the full jar (test-jars/) is used by the visual run alone.
+def sableJarFile = file('../ColonyPatchServer/test-jars/sable-neoforge-1.21.1-2.0.5.jar')
+def journeyMapJarFile = file('test-jars/journeymap-neoforge-1.21.1-6.0.7.jar')
+def sableCompileDir = layout.buildDirectory.dir('sable-compile')
+
+def extractSableCompileJars = tasks.register('extractSableCompileJars', Copy) {
+    doFirst {
+        if (!sableJarFile.isFile()) throw new GradleException("Sable jar not found: ${sableJarFile}")
+    }
+    from({ zipTree(sableJarFile) }) {
+        include 'META-INF/jarjar/sable-companion-*.jar'
+        eachFile { it.path = it.name }
+        includeEmptyDirs = false
+    }
+    into sableCompileDir
+}
+
+def mapCompileJars = files(sableJarFile, fileTree(dir: 'libs', include: '*.jar'), fileTree(dir: sableCompileDir, include: '*.jar')).builtBy(extractSableCompileJars)
+
+dependencies {
+    compileOnly mapCompileJars
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+neoForge {
+    version = project.neo_version
+
+    mods {
+        "${mod_id}" {
+            sourceSet sourceSets.main
+        }
+        jmshipstest {
+            sourceSet sourceSets.testmod
+        }
+    }
+
+    runs {
+        // A real client with JourneyMap and Sable: makes a flat world, builds ships, takes screenshots, quits.
+        visual {
+            client()
+            gameDirectory = project.file('run-visual')
+            sourceSet = sourceSets.testmod
+            loadedMods = [neoForge.mods.named(mod_id).get(), neoForge.mods.named('jmshipstest').get()]
+            systemProperty 'jmshipstest.visual', 'true'
+            systemProperty 'jmships.debug', 'true'
+            programArguments.addAll '--width', '1280', '--height', '800'
+            jvmArgument '-Xmx3G'
+        }
+    }
+}
+
+neoForge.addModdingDependenciesTo(sourceSets.testmod)
+
+dependencies {
+    testmodCompileOnly mapCompileJars
+}
+
+tasks.named('runVisual').configure {
+    doFirst {
+        def dir = file('run-visual')
+        def mods = new File(dir, 'mods')
+        mods.mkdirs()
+        def wanted = [sableJarFile, journeyMapJarFile]
+        def unexpected = mods.listFiles()?.findAll { it.isFile() && it.name.endsWith('.jar') && !(it.name in wanted.collect { it.name }) }
+        if (unexpected) throw new GradleException("Unexpected test mods; keep this run isolated: ${unexpected}")
+        wanted.each { File jar ->
+            if (!jar.isFile()) throw new GradleException("Missing test jar ${jar}")
+            java.nio.file.Files.copy(jar.toPath(), new File(mods, jar.name).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+        // A fresh world every time: the check builds its own ships and reads its own screenshots.
+        delete file('run-visual/saves/JMShipsVisual')
+        delete file('run-visual/jmships-result.txt')
+        delete fileTree(dir: 'run-visual/screenshots', include: 'jmships-*.png')
+        def options = new File(dir, 'options.txt')
+        if (!options.exists()) {
+            options.text = ['pauseOnLostFocus:false', 'onboardAccessibility:false', 'skipMultiplayerWarning:true', 'tutorialStep:none',
+                            'renderDistance:8', 'simulationDistance:6', 'guiScale:2', 'lang:en_us', 'soundCategory_master:0.0'].join(System.lineSeparator()) + System.lineSeparator()
+        }
+    }
+    doLast {
+        def report = file('run-visual/jmships-result.txt')
+        if (!report.exists()) throw new GradleException('The visual client produced no result')
+        if (!report.text.startsWith('PASS ')) throw new GradleException(report.text)
+        logger.lifecycle(report.text)
+    }
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}
+
+// Expand mod metadata template (src/main/templates) into generated resources.
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            neo_version_range      : neo_version_range,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+tasks.named('jar', Jar) {
+    from('LICENSE') { rename { 'LICENSE_jmships.txt' } }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}

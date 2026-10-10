@@ -1,0 +1,7 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="MIT"
+[[mods]]
+modId="jmshipstest"
+version="1"
+displayName="JourneyMap Ships development visual check"
