@@ -33,7 +33,14 @@ public final class ShipScanner {
         return box != null && box.maxX() >= box.minX() && box.maxY() >= box.minY() && box.maxZ() >= box.minZ();
     }
 
-    /** The ship's blocks, or null while its chunks have not all arrived (keep what was read before). */
+    /**
+     * The ship's blocks, or null when there is nothing to read yet (keep what was read before).
+     *
+     * <p>Sable lists only the chunks of the plot that have arrived (seen in Sable 2.0.3: a chunk is added to the list
+     * together with its holder), so a reading made while a chunk is still on its way leaves its blocks out instead of
+     * returning null. Sable sends a ship's chunks together with the ship itself, so this matters only when a ship grows;
+     * {@code ShipOverlays} reads again shortly after every change of size for that reason.</p>
+     */
     @Nullable
     public static ShipVoxels scan(ClientSubLevel ship) {
         final BoundingBox3ic box = ship.getPlot().getBoundingBox();
@@ -48,14 +55,20 @@ public final class ShipScanner {
             return null;
         }
 
+        // Looked over before the grid is made: this may be asked every tick until there is something to read.
+        int chunks = 0;
+        for (final PlotChunkHolder holder : ship.getPlot().getLoadedChunks()) {
+            if (holder.getChunk() == null) return null;
+            chunks++;
+        }
+        if (chunks == 0) return null;
+
         final ClientLevel level = ship.getLevel();
         final byte[] colors = new byte[sizeX * sizeY * sizeZ];
         final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        int chunks = 0;
         for (final PlotChunkHolder holder : ship.getPlot().getLoadedChunks()) {
             final LevelChunk chunk = holder.getChunk();
             if (chunk == null) return null;
-            chunks++;
             final int x0 = Math.max(chunk.getPos().getMinBlockX(), minX), x1 = Math.min(chunk.getPos().getMaxBlockX(), box.maxX());
             final int z0 = Math.max(chunk.getPos().getMinBlockZ(), minZ), z1 = Math.min(chunk.getPos().getMaxBlockZ(), box.maxZ());
             if (x0 > x1 || z0 > z1) continue;
@@ -77,7 +90,7 @@ public final class ShipScanner {
                 }
             }
         }
-        return chunks == 0 ? null : new ShipVoxels(minX, minY, minZ, sizeX, sizeY, sizeZ, colors);
+        return new ShipVoxels(minX, minY, minZ, sizeX, sizeY, sizeZ, colors);
     }
 
     /** The pose the ship is being drawn with in the world right now. */

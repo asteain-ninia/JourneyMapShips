@@ -92,6 +92,30 @@ class VisibilityTest {
         assertEquals(Visibility.HIDDEN, Visibility.inCave(new Column().stone(-38, -38).stone(-55, -52), 0, 0, -60, MIN, MAX));
     }
 
+    /**
+     * Far from the player the world under a ship is often not loaded on the client. {@link LevelColumns} then gets the
+     * bottom of the world from Minecraft as the top of the column and air for every block: that must read as open sky, not
+     * as a roof.
+     */
+    @Test
+    void overGroundTheClientHasNotLoadedAShipIsUnderTheOpenSky() {
+        final WorldColumns unloaded = new WorldColumns() {
+            @Override
+            public int top(int x, int z) {
+                return -65;
+            }
+
+            @Override
+            public boolean drawn(int x, int y, int z) {
+                return false;
+            }
+        };
+        assertTrue(Visibility.openSky(unloaded, 1000, -2000, 150));
+        // The cave map of the player's slice (64 to 79) leaves out a ship that flies above it, as it would a block there.
+        assertEquals(Visibility.HIDDEN, Visibility.inCave(unloaded, 1000, -2000, 150, 64, 79));
+        assertEquals(Visibility.DIMMED, Visibility.inCave(unloaded, 1000, -2000, 70, 64, 79));
+    }
+
     @Test
     void aPictureIsMaskedPixelByPixel() {
         // Two pixels side by side at world x 0 and 1: the first under a roof, the second in the open; a third without a ship.
