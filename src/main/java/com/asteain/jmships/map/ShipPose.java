@@ -29,13 +29,15 @@ public record ShipPose(double px, double py, double pz, double qx, double qy, do
 
     /**
      * Whether a picture drawn for {@code drawn} is still good enough for this pose: nothing on the map may have moved by
-     * more than {@code tolerance} blocks. Height counts as well: the drawn shape does not change with it, but which parts
-     * are shown does ({@link Visibility} decides from the level of each drawn block whether it is under a roof, or in the
-     * cave map's slice), so a ship that only rises or sinks has to be drawn again too.
+     * more than {@code tolerance} blocks. Height counts as well, by its own {@code heightTolerance}: the drawn shape does not
+     * change with it, but which parts are shown does ({@link Visibility} decides from the level of each drawn block whether
+     * it is under a roof, or in the cave map's slice), so a ship that only rises or sinks has to be drawn again too. That
+     * only changes at whole levels, so the height may be allowed more than the position, and a ship that bobs a little
+     * where it hovers is not drawn again on every tick.
      */
-    public boolean looksLike(ShipPose drawn, double reach, double tolerance) {
+    public boolean looksLike(ShipPose drawn, double reach, double tolerance, double heightTolerance) {
         if (Math.abs(px - drawn.px) > tolerance || Math.abs(pz - drawn.pz) > tolerance) return false;
-        if (Math.abs(py - drawn.py) > tolerance) return false;
+        if (Math.abs(py - drawn.py) > heightTolerance) return false;
         if (Math.abs(sx - drawn.sx) > 1e-4 || Math.abs(sy - drawn.sy) > 1e-4 || Math.abs(sz - drawn.sz) > 1e-4) return false;
         if (Math.abs(rx - drawn.rx) > 1e-6 || Math.abs(ry - drawn.ry) > 1e-6 || Math.abs(rz - drawn.rz) > 1e-6) return false;
         // The angle between two orientations is 2 * acos(|dot|); for small angles 1 - |dot| is angle^2 / 8.
