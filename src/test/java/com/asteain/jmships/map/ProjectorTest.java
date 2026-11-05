@@ -150,9 +150,15 @@ class ProjectorTest {
     @Test
     void aPictureIsKeptWhileNothingOnItWouldMoveVisibly() {
         final ShipPose drawn = yaw(10, 64, 10, 30);
-        assertTrue(yaw(10.01, 70, 10, 30).looksLike(drawn, 8, 0.0625));
-        assertFalse(yaw(10.1, 64, 10, 30).looksLike(drawn, 8, 0.0625));
-        assertTrue(yaw(10, 64, 10, 30.2).looksLike(drawn, 8, 0.0625));
-        assertFalse(yaw(10, 64, 10, 31).looksLike(drawn, 8, 0.0625));
+        assertTrue(yaw(10.01, 64.01, 10, 30).looksLike(drawn, 8, 0.0625, 0.5));
+        assertFalse(yaw(10.1, 64, 10, 30).looksLike(drawn, 8, 0.0625, 0.5));
+        // Rising or sinking alone changes what is under a roof or in the cave map's slice, so it is drawn again,
+        // but bobbing by less than the height tolerance is not.
+        assertTrue(yaw(10, 64.3, 10, 30).looksLike(drawn, 8, 0.0625, 0.5));
+        assertTrue(yaw(10, 63.7, 10, 30).looksLike(drawn, 8, 0.0625, 0.5));
+        assertFalse(yaw(10, 64.6, 10, 30).looksLike(drawn, 8, 0.0625, 0.5));
+        assertFalse(yaw(10, 70, 10, 30).looksLike(drawn, 8, 0.0625, 0.5));
+        assertTrue(yaw(10, 64, 10, 30.2).looksLike(drawn, 8, 0.0625, 0.5));
+        assertFalse(yaw(10, 64, 10, 31).looksLike(drawn, 8, 0.0625, 0.5));
     }
 }

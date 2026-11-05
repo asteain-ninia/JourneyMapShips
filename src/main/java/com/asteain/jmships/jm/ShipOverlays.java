@@ -49,6 +49,11 @@ final class ShipOverlays {
     private static final int PIXELS_PER_BLOCK = 1;
     /** A picture is redrawn when something on it would have moved by more than this part of a pixel. */
     private static final double REDRAW_AT_PIXELS = 0.1;
+    /**
+     * A picture is redrawn when the ship has risen or sunk by more than this many blocks: what is under a roof or in the
+     * cave map's slice changes only at whole levels, and a hovering ship that bobs less than this is not redrawn for it.
+     */
+    private static final double REDRAW_AT_HEIGHT = 0.5;
     private static final String GROUP = "Ships";
     private static final Context.MapType[] SURFACE_MAPS = {Context.MapType.Day, Context.MapType.Night, Context.MapType.Topo, Context.MapType.Biome};
     private static final Context.MapType[] CAVE_MAPS = {Context.MapType.Underground};
@@ -170,7 +175,7 @@ final class ShipOverlays {
         final boolean surfaceReplaced = ship.surface.texture.resize(canvas.pixels());
         final boolean caveReplaced = caveWanted && ship.cave.texture.resize(canvas.pixels());
         final boolean caveNew = caveWanted && ship.cave.overlay == null;
-        if (ship.stale || surfaceReplaced || caveReplaced || caveNew || !pose.looksLike(ship.drawn, reach, REDRAW_AT_PIXELS / canvas.pixelsPerBlock())) {
+        if (ship.stale || surfaceReplaced || caveReplaced || caveNew || !pose.looksLike(ship.drawn, reach, REDRAW_AT_PIXELS / canvas.pixelsPerBlock(), REDRAW_AT_HEIGHT)) {
             final int pixels = canvas.pixels() * canvas.pixels();
             if (ship.colors == null || ship.colors.length != pixels) {
                 ship.colors = new byte[pixels];
