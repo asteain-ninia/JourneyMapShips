@@ -40,7 +40,7 @@ import java.util.UUID;
  *
  * <p>A ship has two pictures, because what a map shows of a place depends on the kind of map: one for the surface maps and
  * one for the cave map. JourneyMap picks the right one by the map types each is registered for. The cave picture is only
- * kept while a cave map is on screen.</p>
+ * drawn and shown while a cave map is on screen; once made, its texture is kept until the ship is let go.</p>
  */
 final class ShipOverlays {
     /** Ticks between two readings of a ship's blocks and of the world around it (a changed size is noticed at once). */

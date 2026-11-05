@@ -77,10 +77,17 @@ final class ShipTexture implements AutoCloseable {
         return PALETTE[at];
     }
 
+    /**
+     * Frees the picture: its pixels and its GL texture. The texture is closed directly, as vanilla's map renderer does, and
+     * not through {@code TextureManager.release}: in 1.21.1 that only deletes the GL texture, leaving the image allocated and
+     * the texture registered with its old id, so the next {@link #resize} under the same name (the same ship coming back)
+     * closed it again and deleted that id a second time, by then perhaps another texture's. Closing twice is harmless: the
+     * second {@code register} under this name closes the old texture again, which finds nothing left to free.
+     */
     @Override
     public void close() {
         if (texture != null) {
-            Minecraft.getInstance().getTextureManager().release(location);
+            texture.close();
             texture = null;
             side = 0;
         }
