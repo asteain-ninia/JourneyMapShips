@@ -45,6 +45,11 @@ import java.util.UUID;
 final class ShipOverlays {
     /** Ticks between two readings of a ship's blocks and of the world around it (a changed size is noticed at once). */
     private static final int SCAN_INTERVAL = 40;
+    /**
+     * Ticks after a change of size at which the blocks are read once more. Sable lists only the chunks of a ship that have
+     * arrived, and a new size may arrive before the chunk that holds the new blocks, so the first reading can miss them.
+     */
+    private static final int RESCAN_AFTER_RESIZE = 5;
     /** As JourneyMap's own map: one pixel to a block, on the world's block grid. */
     private static final int PIXELS_PER_BLOCK = 1;
     /** A picture is redrawn when something on it would have moved by more than this part of a pixel. */
@@ -109,7 +114,20 @@ final class ShipOverlays {
                 present.add(client.getUniqueId());
                 final Ship ship = ships.computeIfAbsent(client.getUniqueId(), Ship::new);
                 if (viewChanged) ship.stale = true;
-                update(ship, client, world);
+                // A ship that could not be drawn is tried again on its own reading tick only, so that one bad ship
+                // neither floods the log nor takes the other ships off the map.
+                if (ship.broken && !scanDue(ship)) continue;
+                try {
+                    update(ship, client, world);
+                    ship.broken = false;
+                } catch (RuntimeException e) {
+                    if (!ship.broken) JmShips.LOGGER.warn("[JourneyMap Ships] Could not draw ship {} '{}'; it is left off the map and tried again every {} ticks.",
+                            ship.id, name(client), SCAN_INTERVAL, e);
+                    ship.broken = true;
+                    ship.stale = true;
+                    hideQuietly(ship.surface);
+                    hideQuietly(ship.cave);
+                }
             }
         }
         for (final Iterator<Ship> it = ships.values().iterator(); it.hasNext(); ) {
@@ -138,11 +156,13 @@ final class ShipOverlays {
             return;
         }
         final boolean resized = ship.voxels == null || !ship.voxels.hasBounds(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ());
-        if (resized || Math.floorMod(ticks + ship.id.hashCode(), SCAN_INTERVAL) == 0) {
+        final boolean due = scanDue(ship);
+        if (resized || due || ticks == ship.rescanAt) {
             final ShipVoxels scanned = ShipScanner.scan(client);
             if (scanned != null && !scanned.sameContent(ship.voxels)) ship.voxels = scanned;
             // The world around the ship may have changed too (a roof built over it): look again in any case.
             ship.stale = true;
+            if (resized) ship.rescanAt = ticks + RESCAN_AFTER_RESIZE;
         }
         if (ship.voxels == null) return;
         if (ship.voxels.surface.length == 0) {
@@ -193,12 +213,21 @@ final class ShipOverlays {
         final int y = Mth.floor(pose.py());
         final BlockPos northWest = new BlockPos(canvas.anchorX(), y, canvas.anchorZ());
         final BlockPos southEast = new BlockPos(canvas.anchorX() + canvas.blocks(), y, canvas.anchorZ() + canvas.blocks());
-        place(ship.surface, northWest, southEast, name, moved, surfaceReplaced);
-        if (caveWanted) place(ship.cave, northWest, southEast, name, moved, caveReplaced);
+        place(ship.surface, northWest, southEast, name, moved, surfaceReplaced, due);
+        if (caveWanted) place(ship.cave, northWest, southEast, name, moved, caveReplaced, due);
     }
 
-    /** Puts a picture on the map, or moves it, or tells JourneyMap that its texture or name is a new one. */
-    private void place(Layer layer, BlockPos northWest, BlockPos southEast, String name, boolean moved, boolean replaced) {
+    /** Whether this is the ship's own tick for reading its blocks again (ships take turns, by their ids). */
+    private boolean scanDue(Ship ship) {
+        return Math.floorMod(ticks + ship.id.hashCode(), SCAN_INTERVAL) == 0;
+    }
+
+    /**
+     * Puts a picture on the map, or moves it, or tells JourneyMap that its texture or name is a new one. With
+     * {@code refresh}, a picture that is already up is handed to JourneyMap once more although nothing changed: a picture
+     * JourneyMap has let go of (or did not take) would otherwise stay off the map for as long as the ship does not move.
+     */
+    private void place(Layer layer, BlockPos northWest, BlockPos southEast, String name, boolean moved, boolean replaced, boolean refresh) {
         if (layer.overlay == null) {
             layer.overlay = new ImageOverlay(JmShips.MODID, northWest, southEast, layer.image());
             layer.overlay.setDimension(dimension).setOverlayGroupName(GROUP).setTitle(name)
@@ -208,13 +237,16 @@ final class ShipOverlays {
             if (replaced) layer.overlay.setImage(layer.image());
             layer.overlay.setTitle(name);
             layer.overlay.flagForRerender();
-        } else {
+        } else if (!refresh) {
             return;
         }
         try {
             api.show(layer.overlay);
+            layer.refused = false;
         } catch (Exception e) {
-            JmShips.LOGGER.warn("[JourneyMap Ships] JourneyMap did not take a ship's picture: {}", e.toString());
+            // Tried again at the next refresh at the latest; said once until JourneyMap takes it.
+            if (!layer.refused) JmShips.LOGGER.warn("[JourneyMap Ships] JourneyMap did not take a ship's picture: {}", e.toString());
+            layer.refused = true;
         }
     }
 
@@ -228,6 +260,15 @@ final class ShipOverlays {
         if (layer.overlay == null) return;
         api.remove(layer.overlay);
         layer.overlay = null;
+    }
+
+    /** As {@link #hide}, for when something has already gone wrong: the picture counts as off the map in any case. */
+    private void hideQuietly(Layer layer) {
+        try {
+            hide(layer);
+        } catch (RuntimeException e) {
+            layer.overlay = null;
+        }
     }
 
     private void retire(Ship ship) {
@@ -258,6 +299,8 @@ final class ShipOverlays {
         final ShipTexture texture;
         final Context.MapType[] maps;
         ImageOverlay overlay;
+        /** JourneyMap threw when last given this picture. */
+        boolean refused;
 
         Layer(String path, Context.MapType[] maps) {
             this.texture = new ShipTexture(JmShips.id(path));
@@ -280,6 +323,10 @@ final class ShipOverlays {
         ShipPose drawn;
         /** Something the pictures depend on, other than the pose, may have changed since they were drawn. */
         boolean stale = true;
+        /** Drawing the ship threw last time it was tried. */
+        boolean broken;
+        /** A tick at which the blocks are read once more after a change of size; -1 when none is due. */
+        long rescanAt = -1;
         byte[] colors;
         float[] heights;
         byte[] shown;
