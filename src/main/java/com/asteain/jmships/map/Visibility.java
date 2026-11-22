@@ -52,6 +52,32 @@ public final class Visibility {
         return (int) Math.floor(py + height - EDGE);
     }
 
+    /**
+     * The heights the ship may rise or sink to, from {@code low} up to just under {@code high}, while every pixel of a
+     * picture stays on its level. What is shown depends on the height only through those levels (under a roof or not, in
+     * the cave map's slice or not), so in between the picture needs no redrawing. A hundredth of a block may already be
+     * too much, when a top is just under a block boundary.
+     */
+    public record Levels(double low, double high) {
+        public boolean hold(double py) {
+            return py >= low && py < high;
+        }
+    }
+
+    /** The {@link Levels} of a picture drawn at height {@code py}, from what {@link Projector} saw. */
+    public static Levels levels(double py, byte[] colors, float[] heights) {
+        double down = Double.POSITIVE_INFINITY;
+        double up = Double.POSITIVE_INFINITY;
+        for (int at = 0; at < colors.length; at++) {
+            if (colors[at] == 0) continue;
+            final double top = py + heights[at] - EDGE;
+            final double above = top - Math.floor(top);
+            down = Math.min(down, above);
+            up = Math.min(up, 1 - above);
+        }
+        return new Levels(py - down, py + up);
+    }
+
     /** The level of the highest drawn block of the world above {@code level}; {@code level} itself when there is none. */
     private static int roof(WorldColumns world, int x, int z, int level) {
         for (int y = world.top(x, z); y > level; y--) {

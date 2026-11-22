@@ -54,6 +54,24 @@ class VisibilityTest {
     }
 
     @Test
+    void aPictureHoldsItsLevelsUntilATopCrossesABlockBoundary() {
+        // A level ship hovering at 69.98: its tops are just under a boundary, so 0.02 up already changes their levels.
+        final Visibility.Levels flat = Visibility.levels(69.98, new byte[]{1, 1, 0}, new float[]{1.0F, 2.0F, 0.5F});
+        assertTrue(flat.hold(69.98));
+        assertTrue(flat.hold(69.01));
+        assertFalse(flat.hold(70.02));
+        assertFalse(flat.hold(68.95));
+        // A tilted ship: the top in the middle (at 70.95) crosses first, not the highest or the lowest one.
+        final Visibility.Levels tilted = Visibility.levels(64.0, new byte[]{1, 1, 1}, new float[]{0.3F, 6.95F, 9.5F});
+        assertTrue(tilted.hold(64.04));
+        assertFalse(tilted.hold(64.06));
+        assertTrue(tilted.hold(63.71));
+        assertFalse(tilted.hold(63.69));
+        // Nothing drawn: no height changes anything.
+        assertTrue(Visibility.levels(64.0, new byte[]{0}, new float[]{1.0F}).hold(1000));
+    }
+
+    @Test
     void onTheSurfaceMapOnlyWhatIsAboveHides() {
         assertTrue(Visibility.openSky(new Column(), 0, 0, SHIP));
         assertTrue(Visibility.openSky(new Column().stone(-61, -50), 0, 0, SHIP));
